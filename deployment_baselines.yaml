@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rnachat-baselines-job
+spec:
+  backoffLimit: 0   # 失败后不重试，可按需要调整
+  template:
+    metadata:
+      labels:
+        job-name: rnachat-baselines-job
+    spec:
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Gi
+      containers:
+        - name: baselines-container
+          image: pytorch/pytorch:2.3.0-cuda11.8-cudnn8-devel
+          workingDir: /
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              apt-get update && apt-get install -y git curl python3-pip && \
+              git config --global user.email "hankzhu2001@gmail.com" && \
+              git config --global user.name "HouZhu2001" && \
+              git clone https://github.com/HouZhu2001/RNAChat_Baselines.git RNAChat_Baselines && \
+              cd RNAChat_Baselines && \
+              curl -L -o rna_data.csv "https://drive.google.com/uc?export=download&id=1oAeuCqvGLO0VuwmCttE4d7PKGA3ggiMP" && \
+              pip install -r requirements.txt && \
+              nohup bash -c "
+                echo 'Starting baseline training for all models...' > training.log
+                models=('lstm' 'transformer' 't5-base' 't5-large' 'flan-t5-base' 'bart-base')
+                for model in \"\${models[@]}\"; do
+                  echo \"Training model: \$model\" >> training.log
+                  python complete_baselines_all.py --data rna_data.csv --model \$model --epochs 5 --batch_size 16 --output results_\$model.json >> training.log 2>&1
+                  echo \"Completed model: \$model\" >> training.log
+                done
+                echo 'All baseline training completed!' >> training.log
+              " > /dev/null 2>&1 & \
+              echo "Baseline training started in background for all models" && \
+              tail -f training.log
+          resources:
+            limits:
+              cpu: 2400m
+              # nvidia.com/a100: 1
+              nvidia.com/rtxa6000: 1
+              memory: 60Gi
+            requests:
+              cpu: 2000m
+              # nvidia.com/a100: 1
+              nvidia.com/rtxa6000: 1
+              memory: 50Gi
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+      restartPolicy: Never
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #       - matchExpressions:
+      #         - key: nvidia.com/gpu.product
+      #           operator: In
+      #           values:
+      #           - NVIDIA-A100-SXM4-80GB
