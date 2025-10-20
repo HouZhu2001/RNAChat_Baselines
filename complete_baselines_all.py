@@ -296,7 +296,7 @@ class RNADataset(Dataset):
 def collate_fn(batch):
     srcs = pad_sequence([b['src'] for b in batch], batch_first=True, padding_value=0)
     tgts = pad_sequence([b['tgt'] for b in batch], batch_first=True, padding_value=0)
-    return {'src': srcs, 'tgt': tgts, 'summaries': [b['summary_no_citation'] for b in batch]}
+    return {'src': srcs, 'tgt': tgts, 'summaries': [b['summary'] for b in batch]}
 
 
 # ============================================================================
