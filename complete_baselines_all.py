@@ -556,7 +556,7 @@ def train_pretrained_lm(lm_wrapper, train_df, val_df, num_epochs=10, batch_size=
         
         for i in tqdm(range(0, len(train_df), batch_size), desc=f'Epoch {epoch+1}/{num_epochs}'):
             batch_df = train_df.iloc[i:i+batch_size]
-            inputs = [f"Describe the function of RNA {name}: {seq[:500]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
+            inputs = [f"Describe the function of RNA {name}: {seq[:1000]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
             targets = list(batch_df['summary_no_citation'])
             
             input_enc = tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors='pt').to(device)
@@ -580,7 +580,7 @@ def train_pretrained_lm(lm_wrapper, train_df, val_df, num_epochs=10, batch_size=
         with torch.no_grad():
             for i in range(0, len(val_df), batch_size):
                 batch_df = val_df.iloc[i:i+batch_size]
-                inputs = [f"Describe the function of RNA {name}: {seq[:500]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
+                inputs = [f"Describe the function of RNA {name}: {seq[:1000]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
                 targets = list(batch_df['summary_no_citation'])
                 
                 input_enc = tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors='pt').to(device)
