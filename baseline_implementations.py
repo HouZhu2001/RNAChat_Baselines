@@ -379,9 +379,10 @@ class FineTunedT5:
             for batch in train_loader:
                 sequences = batch['sequence']
                 functions = batch['function']
+                names = batch.get('name', [f'RNA_{i}' for i in range(len(sequences))])
                 
                 # Format input
-                inputs = [f"describe RNA function: {seq}" for seq in sequences]
+                inputs = [f"Describe the function of RNA {name}: {seq}" for name, seq in zip(names, sequences)]
                 
                 # Tokenize
                 input_ids = self.tokenizer(
@@ -401,9 +402,11 @@ class FineTunedT5:
                 loss.backward()
                 optimizer.step()
                 
-    def predict(self, sequences: List[str], max_length=200) -> List[str]:
+    def predict(self, sequences: List[str], names: List[str] = None, max_length=200) -> List[str]:
         self.model.eval()
-        inputs = [f"describe RNA function: {seq}" for seq in sequences]
+        if names is None:
+            names = [f'RNA_{i}' for i in range(len(sequences))]
+        inputs = [f"Describe the function of RNA {name}: {seq}" for name, seq in zip(names, sequences)]
         
         input_ids = self.tokenizer(
             inputs, return_tensors='pt', padding=True, truncation=True
@@ -429,9 +432,10 @@ class FineTunedFLANT5:
             for batch in train_loader:
                 sequences = batch['sequence']
                 functions = batch['function']
+                names = batch.get('name', [f'RNA_{i}' for i in range(len(sequences))])
                 
-                inputs = [f"Describe the biological function of this RNA sequence: {seq}" 
-                         for seq in sequences]
+                inputs = [f"Describe the biological function of RNA {name}: {seq}" 
+                         for name, seq in zip(names, sequences)]
                 
                 input_ids = self.tokenizer(
                     inputs, return_tensors='pt', padding=True, truncation=True
@@ -448,10 +452,12 @@ class FineTunedFLANT5:
                 loss.backward()
                 optimizer.step()
                 
-    def predict(self, sequences: List[str], max_length=200) -> List[str]:
+    def predict(self, sequences: List[str], names: List[str] = None, max_length=200) -> List[str]:
         self.model.eval()
-        inputs = [f"Describe the biological function of this RNA sequence: {seq}" 
-                 for seq in sequences]
+        if names is None:
+            names = [f'RNA_{i}' for i in range(len(sequences))]
+        inputs = [f"Describe the biological function of RNA {name}: {seq}" 
+                 for name, seq in zip(names, sequences)]
         
         input_ids = self.tokenizer(
             inputs, return_tensors='pt', padding=True, truncation=True
@@ -476,9 +482,13 @@ class FineTunedBART:
             for batch in train_loader:
                 sequences = batch['sequence']
                 functions = batch['function']
+                names = batch.get('name', [f'RNA_{i}' for i in range(len(sequences))])
+                
+                # Format sequences with names
+                formatted_sequences = [f"RNA {name}: {seq}" for name, seq in zip(names, sequences)]
                 
                 input_ids = self.tokenizer(
-                    sequences, return_tensors='pt', padding=True, truncation=True
+                    formatted_sequences, return_tensors='pt', padding=True, truncation=True
                 ).input_ids.to(self.device)
                 
                 labels = self.tokenizer(
@@ -492,10 +502,13 @@ class FineTunedBART:
                 loss.backward()
                 optimizer.step()
                 
-    def predict(self, sequences: List[str], max_length=200) -> List[str]:
+    def predict(self, sequences: List[str], names: List[str] = None, max_length=200) -> List[str]:
         self.model.eval()
+        if names is None:
+            names = [f'RNA_{i}' for i in range(len(sequences))]
+        formatted_sequences = [f"RNA {name}: {seq}" for name, seq in zip(names, sequences)]
         input_ids = self.tokenizer(
-            sequences, return_tensors='pt', padding=True, truncation=True
+            formatted_sequences, return_tensors='pt', padding=True, truncation=True
         ).input_ids.to(self.device)
         
         with torch.no_grad():

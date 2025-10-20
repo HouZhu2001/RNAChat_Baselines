@@ -123,10 +123,20 @@ def load_data_from_csv(csv_path):
     df = pd.read_csv(csv_path)
     
     # Check required columns
-    required_cols = ['sequence', 'summary']
+    required_cols = ['sequence', 'summary_no_citation']
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
+    
+    # Clean data - remove rows with NaN values and convert to string
+    print(f"Original data size: {len(df)}")
+    df = df.dropna(subset=required_cols)
+    df['sequence'] = df['sequence'].astype(str)
+    df['summary_no_citation'] = df['summary_no_citation'].astype(str)
+    
+    # Remove empty sequences or summaries
+    df = df[(df['sequence'].str.len() > 0) & (df['summary_no_citation'].str.len() > 0)]
+    print(f"Cleaned data size: {len(df)}")
     
     # Handle name column
     if 'name' not in df.columns:
@@ -243,14 +253,14 @@ class RNADataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         src = self.rna_tokenizer.encode(row['sequence'])
-        tgt = self.text_tokenizer.encode(row['summary'])
-        return {'src': src, 'tgt': tgt, 'summary': row['summary']}
+        tgt = self.text_tokenizer.encode(row['summary_no_citation'])
+        return {'src': src, 'tgt': tgt, 'summary': row['summary_no_citation']}
 
 
 def collate_fn(batch):
     srcs = pad_sequence([b['src'] for b in batch], batch_first=True, padding_value=0)
     tgts = pad_sequence([b['tgt'] for b in batch], batch_first=True, padding_value=0)
-    return {'src': srcs, 'tgt': tgts, 'summaries': [b['summary'] for b in batch]}
+    return {'src': srcs, 'tgt': tgts, 'summaries': [b['summary_no_citation'] for b in batch]}
 
 
 # ============================================================================
@@ -510,8 +520,8 @@ def train_pretrained_lm(lm_wrapper, train_df, val_df, num_epochs=10, batch_size=
         
         for i in tqdm(range(0, len(train_df), batch_size), desc=f'Epoch {epoch+1}/{num_epochs}'):
             batch_df = train_df.iloc[i:i+batch_size]
-            inputs = [f"describe RNA function: {seq[:500]}" for seq in batch_df['sequence']]
-            targets = list(batch_df['summary'])
+            inputs = [f"Describe the function of RNA {name}: {seq[:500]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
+            targets = list(batch_df['summary_no_citation'])
             
             input_enc = tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors='pt').to(device)
             target_enc = tokenizer(targets, padding=True, truncation=True, max_length=200, return_tensors='pt').to(device)
@@ -534,8 +544,8 @@ def train_pretrained_lm(lm_wrapper, train_df, val_df, num_epochs=10, batch_size=
         with torch.no_grad():
             for i in range(0, len(val_df), batch_size):
                 batch_df = val_df.iloc[i:i+batch_size]
-                inputs = [f"describe RNA function: {seq[:500]}" for seq in batch_df['sequence']]
-                targets = list(batch_df['summary'])
+                inputs = [f"Describe the function of RNA {name}: {seq[:500]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
+                targets = list(batch_df['summary_no_citation'])
                 
                 input_enc = tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors='pt').to(device)
                 target_enc = tokenizer(targets, padding=True, truncation=True, max_length=200, return_tensors='pt').to(device)
@@ -605,7 +615,7 @@ def evaluate_pretrained_lm(lm_wrapper, test_df, batch_size=8):
     with torch.no_grad():
         for i in tqdm(range(0, len(test_df), batch_size), desc='Evaluating'):
             batch_df = test_df.iloc[i:i+batch_size]
-            inputs = [f"describe RNA function: {seq[:500]}" for seq in batch_df['sequence']]
+            inputs = [f"Describe the function of RNA {name}: {seq[:500]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
             
             input_enc = tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors='pt').to(device)
             outputs = model.generate(input_ids=input_enc['input_ids'], attention_mask=input_enc['attention_mask'], 
@@ -613,7 +623,7 @@ def evaluate_pretrained_lm(lm_wrapper, test_df, batch_size=8):
             
             preds = tokenizer.batch_decode(outputs, skip_special_tokens=True)
             predictions.extend(preds)
-            references.extend(list(batch_df['summary']))
+            references.extend(list(batch_df['summary_no_citation']))
     
     # Compute metrics
     bleu = compute_bleu_corpus(predictions, references)
@@ -663,7 +673,7 @@ def main():
         # Initialize tokenizers
         rna_tokenizer = RNATokenizer()
         text_tokenizer = TextTokenizer()
-        text_tokenizer.build_vocab(train_df['summary'].tolist())
+        text_tokenizer.build_vocab(train_df['summary_no_citation'].tolist())
         
         # Create datasets
         train_dataset = RNADataset(train_df, rna_tokenizer, text_tokenizer)
