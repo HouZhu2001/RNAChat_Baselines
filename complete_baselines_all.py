@@ -651,7 +651,7 @@ def evaluate_pretrained_lm(lm_wrapper, test_df, batch_size=8):
     with torch.no_grad():
         for i in tqdm(range(0, len(test_df), batch_size), desc='Evaluating'):
             batch_df = test_df.iloc[i:i+batch_size]
-            inputs = [f"Describe the function of RNA {name}: {seq[:500]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
+            inputs = [f"Describe the function of RNA {name}: {seq[:1000]}" for name, seq in zip(batch_df['name'], batch_df['sequence'])]
             
             input_enc = tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors='pt').to(device)
             outputs = model.generate(input_ids=input_enc['input_ids'], attention_mask=input_enc['attention_mask'], 
