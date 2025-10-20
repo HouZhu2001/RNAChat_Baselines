@@ -87,9 +87,7 @@ def compute_simcse(predictions, references, device='cuda'):
         
         # Try multiple SimCSE models for better compatibility
         models_to_try = [
-            'princeton-nlp/sup-simcse-roberta-large',
-            'princeton-nlp/sup-simcse-roberta-base',
-            'princeton-nlp/sup-simcse-bert-base-uncased'
+            'princeton-nlp/sup-simcse-roberta-large'
         ]
         
         model = None
