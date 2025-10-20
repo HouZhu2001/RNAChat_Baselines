@@ -579,8 +579,8 @@ class CNNLSTMSeq2Seq(nn.Module):
         cnn_output_dim = num_filters * len(kernel_sizes)
         self.bridge = nn.Linear(cnn_output_dim, hidden_dim * num_layers)
         
-        # LSTM decoder
-        self.decoder = nn.LSTM(embed_dim + hidden_dim, hidden_dim, num_layers, 
+        # LSTM decoder - fix dimension mismatch
+        self.decoder = nn.LSTM(embed_dim + cnn_output_dim, hidden_dim, num_layers, 
                               batch_first=True, dropout=dropout if num_layers > 1 else 0)
         self.output = nn.Linear(hidden_dim, tgt_vocab_size)
         self.dropout = nn.Dropout(dropout)
@@ -603,7 +603,7 @@ class CNNLSTMSeq2Seq(nn.Module):
         # Decode
         outputs = torch.zeros(batch_size, tgt_len, vocab_size).to(src.device)
         dec_input = tgt[:, 0].unsqueeze(1)
-        context = cnn_out.unsqueeze(1)
+        context = cnn_out.unsqueeze(1).expand(-1, 1, -1)  # Expand to match sequence length
         
         for t in range(1, tgt_len):
             emb = self.dropout(self.tgt_embedding(dec_input))
@@ -630,7 +630,7 @@ class CNNLSTMSeq2Seq(nn.Module):
             c = torch.zeros_like(h)
             
             generated = torch.ones(batch_size, 1, dtype=torch.long).to(device)
-            context = cnn_out.unsqueeze(1)
+            context = cnn_out.unsqueeze(1).expand(-1, 1, -1)  # Expand to match sequence length
             
             for _ in range(max_length):
                 emb = self.tgt_embedding(generated[:, -1:])

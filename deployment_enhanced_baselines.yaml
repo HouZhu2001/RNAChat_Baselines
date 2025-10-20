@@ -1,0 +1,67 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rnachat-enhanced-baselines-job
+spec:
+  backoffLimit: 0   # 失败后不重试，可按需要调整
+  template:
+    metadata:
+      labels:
+        job-name: rnachat-enhanced-baselines-job
+    spec:
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Gi
+      containers:
+        - name: baselines-container
+          image: pytorch/pytorch:2.3.0-cuda11.8-cudnn8-devel
+          workingDir: /
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              apt-get update && apt-get install -y git curl python3-pip && \
+              git config --global user.email "hankzhu2001@gmail.com" && \
+              git config --global user.name "HouZhu2001" && \
+              git clone https://github.com/HouZhu2001/RNAChat_Baselines.git RNAChat_Baselines && \
+              cd RNAChat_Baselines && \
+              curl -L -o rna_data.csv "https://drive.google.com/uc?export=download&id=1oAeuCqvGLO0VuwmCttE4d7PKGA3ggiMP" && \
+              pip install --upgrade pip && \
+              pip install --upgrade typing_extensions && \
+              pip install torch>=2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+              pip install -r requirements.txt && \
+              nohup bash -c "
+                echo 'Starting enhanced baselines...' > training.log
+                mkdir -p results
+                python enhanced_baselines.py \
+                  --data rna_data.csv \
+                  --model all \
+                  --epochs 5 \
+                  --batch_size 16 \
+                  --lr 1e-4 \
+                  --device cuda \
+                  --include_neural \
+                  --include_pretrained \
+                  --output results/comprehensive_results.json >> training.log 2>&1
+                echo 'Enhanced baselines completed!' >> training.log
+              " > /dev/null 2>&1 & \
+              echo "Enhanced baselines started in background" && \
+              sleep 10 && \
+              while [ ! -f training.log ]; do sleep 1; done && \
+              tail -f training.log
+          resources:
+            limits:
+              cpu: 2400m
+              # nvidia.com/a100: 1
+              nvidia.com/rtxa6000: 1
+              memory: 12Gi
+            requests:
+              cpu: 2000m
+              # nvidia.com/a100: 1
+              nvidia.com/rtxa6000: 1
+              memory: 12Gi
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+      restartPolicy: Never
