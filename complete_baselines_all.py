@@ -530,11 +530,11 @@ def train_seq2seq(model, train_loader, val_loader, text_tokenizer, num_epochs=10
         
         if avg_val < best_val_loss:
             best_val_loss = avg_val
-            torch.save(model.state_dict(), 'best_model.pt')
+            torch.save(model.state_dict(), 'results/best_model.pt')
             print(f'Saved best model')
     
     # Load best
-    model.load_state_dict(torch.load('best_model.pt'))
+    model.load_state_dict(torch.load('results/best_model.pt'))
     return model
 
 
@@ -598,10 +598,10 @@ def train_pretrained_lm(lm_wrapper, train_df, val_df, num_epochs=10, batch_size=
         
         if avg_val < best_val_loss:
             best_val_loss = avg_val
-            torch.save(model.state_dict(), 'best_lm.pt')
+            torch.save(model.state_dict(), 'results/best_lm.pt')
             print(f'Saved best model')
     
-    model.load_state_dict(torch.load('best_lm.pt'))
+    model.load_state_dict(torch.load('results/best_lm.pt'))
     return lm_wrapper
 
 
