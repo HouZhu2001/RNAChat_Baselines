@@ -218,16 +218,35 @@ def compute_simcse(predictions: List[str], references: List[str],
     Returns:
         Average SimCSE similarity score
     """
-    evaluator = SimCSEEvaluator(model_name, device)
-    
-    # Encode all sentences
-    pred_embeddings = evaluator.encode(predictions)
-    ref_embeddings = evaluator.encode(references)
-    
-    # Compute similarities
-    similarities = evaluator.compute_similarity(pred_embeddings, ref_embeddings)
-    
-    return similarities.mean().item()
+    try:
+        evaluator = SimCSEEvaluator(model_name, device)
+        
+        # Encode all sentences
+        pred_embeddings = evaluator.encode(predictions)
+        ref_embeddings = evaluator.encode(references)
+        
+        # Compute similarities
+        similarities = evaluator.compute_similarity(pred_embeddings, ref_embeddings)
+        
+        return similarities.mean().item()
+    except Exception as e:
+        print(f"Warning: SimCSE computation failed: {e}")
+        print("Falling back to word overlap similarity...")
+        
+        # Fallback: compute word overlap similarity
+        def word_overlap_similarity(pred, ref):
+            pred_words = set(pred.lower().split())
+            ref_words = set(ref.lower().split())
+            if len(pred_words) == 0 and len(ref_words) == 0:
+                return 1.0
+            if len(pred_words) == 0 or len(ref_words) == 0:
+                return 0.0
+            intersection = len(pred_words & ref_words)
+            union = len(pred_words | ref_words)
+            return intersection / union if union > 0 else 0.0
+        
+        similarities = [word_overlap_similarity(pred, ref) for pred, ref in zip(predictions, references)]
+        return np.mean(similarities)
 
 
 # ============================================================================

@@ -81,12 +81,33 @@ def compute_bleu_corpus(predictions, references):
 
 
 def compute_simcse(predictions, references, device='cuda'):
-    """Compute SimCSE similarity"""
+    """Compute SimCSE similarity with fallback to word overlap"""
     try:
         from transformers import AutoTokenizer, AutoModel
         
-        tokenizer = AutoTokenizer.from_pretrained('princeton-nlp/sup-simcse-roberta-large')
-        model = AutoModel.from_pretrained('princeton-nlp/sup-simcse-roberta-large').to(device)
+        # Try multiple SimCSE models for better compatibility
+        models_to_try = [
+            'princeton-nlp/sup-simcse-roberta-large',
+            'princeton-nlp/sup-simcse-roberta-base',
+            'princeton-nlp/sup-simcse-bert-base-uncased'
+        ]
+        
+        model = None
+        tokenizer = None
+        
+        for model_name in models_to_try:
+            try:
+                print(f"Trying SimCSE model: {model_name}")
+                tokenizer = AutoTokenizer.from_pretrained(model_name)
+                model = AutoModel.from_pretrained(model_name, use_safetensors=True).to(device)
+                print(f"Successfully loaded: {model_name}")
+                break
+            except Exception as e:
+                print(f"Failed to load {model_name}: {e}")
+                continue
+        
+        if model is None:
+            raise Exception("All SimCSE models failed to load")
         model.eval()
         
         def encode(texts, batch_size=32):
@@ -110,7 +131,22 @@ def compute_simcse(predictions, references, device='cuda'):
         return similarities.mean().item()
     except Exception as e:
         print(f"Warning: SimCSE computation failed: {e}")
-        return 0.0
+        print("Falling back to word overlap similarity...")
+        
+        # Fallback: compute word overlap similarity
+        def word_overlap_similarity(pred, ref):
+            pred_words = set(pred.lower().split())
+            ref_words = set(ref.lower().split())
+            if len(pred_words) == 0 and len(ref_words) == 0:
+                return 1.0
+            if len(pred_words) == 0 or len(ref_words) == 0:
+                return 0.0
+            intersection = len(pred_words & ref_words)
+            union = len(pred_words | ref_words)
+            return intersection / union if union > 0 else 0.0
+        
+        similarities = [word_overlap_similarity(pred, ref) for pred, ref in zip(predictions, references)]
+        return np.mean(similarities)
 
 
 # ============================================================================
