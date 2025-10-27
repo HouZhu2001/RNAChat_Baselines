@@ -35,6 +35,12 @@ editdistance>=0.6.0
 # Optional: OpenAI API for GPT-4o baseline
 # openai>=1.0.0
 
+# Optional: Google Generative AI for Gemini baseline
+# google-generativeai>=0.3.0
+
+# Optional: Environment variables
+# python-dotenv>=1.0.0
+
 # Development and testing
 pytest>=7.0.0
 black>=22.0.0

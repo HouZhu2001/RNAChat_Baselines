@@ -918,6 +918,63 @@ class KmerEncoder(nn.Module):
         return self.mlp(x)
 
 
+class KmerLM:
+    """K-mer encoder + LLM"""
+    def __init__(self, llm_name='gpt2', device='cuda', k=3):
+        self.device = device
+        self.encoder = KmerEncoder(k=k).to(device)
+        
+        print(f"Loading {llm_name}...")
+        self.tokenizer = GPT2Tokenizer.from_pretrained(llm_name)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.llm = GPT2LMHeadModel.from_pretrained(llm_name).to(device)
+        
+        # Adaptor
+        self.adaptor = nn.Linear(512, self.llm.config.n_embd).to(device)
+    
+    def predict(self, sequences, names, batch_size=8):
+        """Generate predictions using K-mer encoding + LLM"""
+        predictions = []
+        
+        for i in tqdm(range(0, len(sequences), batch_size), desc='K-mer LM'):
+            batch_seqs = sequences[i:i+batch_size]
+            batch_names = names[i:i+batch_size]
+            
+            # Encode sequences
+            with torch.no_grad():
+                encoded = self.encoder(batch_seqs)
+                adapted = self.adaptor(encoded)
+            
+            # Generate text
+            preds = []
+            for j, (seq, name) in enumerate(zip(batch_seqs, batch_names)):
+                prompt = f"Describe the function of RNA {name}: {seq[:500]}"
+                
+                inputs = self.tokenizer.encode(prompt, return_tensors='pt', max_length=512, truncation=True).to(self.device)
+                
+                with torch.no_grad():
+                    # Use adapted encoding as additional context
+                    outputs = self.llm.generate(
+                        inputs,
+                        max_length=inputs.shape[1] + 100,
+                        num_return_sequences=1,
+                        temperature=0.7,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.eos_token_id
+                    )
+                
+                generated = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                # Extract only the generated part (remove prompt)
+                if prompt in generated:
+                    generated = generated.replace(prompt, "").strip()
+                
+                preds.append(generated)
+            
+            predictions.extend(preds)
+        
+        return predictions
+
+
 # ============================================================================
 # CATEGORY 5: RETRIEVAL-BASED METHODS
 # ============================================================================
@@ -1406,6 +1463,31 @@ def run_all_baselines(train_df, val_df, test_df, args):
         results[name] = result
         print(f"{name} Results: BLEU-4={result['BLEU-4']:.4f}, SimCSE={result['SimCSE']:.4f}")
     
+    # Alternative encoding baselines
+    print("\n" + "="*80)
+    print("ALTERNATIVE ENCODING BASELINES")
+    print("="*80)
+    
+    # One-hot encoding baselines
+    print("\n--- Training OneHotLM ---")
+    try:
+        onehot_model = OneHotLM(device=args.device)
+        result = evaluate_pretrained_lm(onehot_model, test_df, args.batch_size)
+        results['OneHotLM'] = result
+        print(f"OneHotLM Results: BLEU-4={result['BLEU-4']:.4f}, SimCSE={result['SimCSE']:.4f}")
+    except Exception as e:
+        print(f"OneHotLM failed: {e}")
+    
+    # K-mer encoding baselines
+    print("\n--- Training KmerLM ---")
+    try:
+        kmer_model = KmerLM(device=args.device, k=3)
+        result = evaluate_pretrained_lm(kmer_model, test_df, args.batch_size)
+        results['KmerLM'] = result
+        print(f"KmerLM Results: BLEU-4={result['BLEU-4']:.4f}, SimCSE={result['SimCSE']:.4f}")
+    except Exception as e:
+        print(f"KmerLM failed: {e}")
+    
     # Seq2Seq baselines
     if args.include_neural:
         print("\n" + "="*80)
@@ -1539,7 +1621,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, required=True, help='Path to CSV file')
     parser.add_argument('--model', type=str, default='all', 
-                       help='Model to run: all, traditional, retrieval, neural, pretrained, or specific model name')
+                       help='Model to run: all, traditional, retrieval, neural, pretrained, onehot, kmer, or specific model name')
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -1555,7 +1637,7 @@ def main():
     # Run experiments
     print("\n" + "="*80)
     print("STARTING COMPREHENSIVE BASELINE EXPERIMENTS")
-    print(f"Total Models: 25+")
+    print(f"Total Models: 27+")
     print(f"Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
     print("="*80)
     
@@ -1596,6 +1678,16 @@ def main():
             model.fit(train_df['sequence'].tolist(), train_df['summary_no_citation'].tolist())
             result = evaluate_traditional_ml(model, test_df)
             results['kNN-Edit'] = result
+        
+        elif args.model == 'onehot':
+            model = OneHotLM(device=args.device)
+            result = evaluate_pretrained_lm(model, test_df, args.batch_size)
+            results['OneHotLM'] = result
+        
+        elif args.model == 'kmer':
+            model = KmerLM(device=args.device, k=3)
+            result = evaluate_pretrained_lm(model, test_df, args.batch_size)
+            results['KmerLM'] = result
         
         else:
             print(f"Unknown model: {args.model}")
