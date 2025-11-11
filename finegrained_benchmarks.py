@@ -840,22 +840,38 @@ def load_go_data(csv_path):
 
 
 def load_rna_type_data(csv_path):
-    """Load RNA type classification data"""
+    """Load RNA type classification data from a CSV file."""
+    print(f"Loading RNA type data from {csv_path}...")
     df = pd.read_csv(csv_path)
-    required_cols = ['sequence', 'rna_type']
     
+    # Normalize column names (handle Sequence vs sequence, etc.)
+    normalized_columns = {col: col.strip().lower() for col in df.columns}
+    df = df.rename(columns=normalized_columns)
+    
+    required_cols = ['sequence', 'rna_type']
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Missing column: {col}")
     
     df = df.dropna(subset=required_cols)
     
+    # Trim whitespace from RNA type labels
+    df['rna_type'] = df['rna_type'].astype(str).str.strip()
+    
     # Split
     n = len(df)
     train_size = int(0.8 * n)
     val_size = int(0.1 * n)
     
-    return df.iloc[:train_size], df.iloc[train_size:train_size+val_size], df.iloc[train_size+val_size:]
+    train_df = df.iloc[:train_size].reset_index(drop=True)
+    val_df = df.iloc[train_size:train_size+val_size].reset_index(drop=True)
+    test_df = df.iloc[train_size+val_size:].reset_index(drop=True)
+    
+    print(f"Loaded RNA type data: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
+    unique_types = df['rna_type'].nunique()
+    print(f"Unique RNA types: {unique_types}")
+    
+    return train_df, val_df, test_df
 
 
 def build_go_graph_from_obo(obo_path):
@@ -1243,6 +1259,8 @@ def main():
                        help='Model to run: all, birwlgo, tfidf, deepgo, rnachat')
     parser.add_argument('--data', type=str, required=False, default='rna_go.csv', help='Path to data CSV')
     parser.add_argument('--go_obo', type=str, default='go_basic.obo', help='Path to GO OBO file')
+    parser.add_argument('--rna_type_data', type=str, default='rna_summary_2d_enhanced.csv',
+                       help='Optional path to RNA type classification CSV (default uses --data)')
     parser.add_argument('--output_dir', type=str, default='results/finegrained')
     parser.add_argument('--device', type=str, default='cuda')
     args = parser.parse_args()
@@ -1276,19 +1294,28 @@ def main():
         print("="*80)
     
     if args.task == 'rna_type' or args.task == 'all':
-        train_df, val_df, test_df = load_rna_type_data(args.data)
-        results = run_rna_type_benchmarks(train_df, val_df, test_df)
-        save_results(results, 'rna_type', args.output_dir)
-        
-        # Print summary
-        print("\n" + "="*80)
-        print("RNA TYPE CLASSIFICATION RESULTS SUMMARY")
-        print("="*80)
-        print(f"{'Model':<20} {'Accuracy':<12} {'Macro-F1':<12}")
-        print("-"*80)
-        for model, res in sorted(results.items(), key=lambda x: x[1]['accuracy'], reverse=True):
-            print(f"{model:<20} {res['accuracy']:<12.4f} {res['macro_f1']:<12.4f}")
-        print("="*80)
+        rna_type_path = args.rna_type_data if args.rna_type_data else args.data
+        try:
+            train_df, val_df, test_df = load_rna_type_data(rna_type_path)
+        except ValueError as e:
+            if 'rna_type' in str(e):
+                print(f"\nSkipping RNA type classification: {e}")
+                print("Provide a CSV with an 'rna_type' column via --rna_type_data to enable this benchmark.")
+            else:
+                raise
+        else:
+            results = run_rna_type_benchmarks(train_df, val_df, test_df)
+            save_results(results, 'rna_type', args.output_dir)
+            
+            # Print summary
+            print("\n" + "="*80)
+            print("RNA TYPE CLASSIFICATION RESULTS SUMMARY")
+            print("="*80)
+            print(f"{'Model':<20} {'Accuracy':<12} {'Macro-F1':<12}")
+            print("-"*80)
+            for model, res in sorted(results.items(), key=lambda x: x[1]['accuracy'], reverse=True):
+                print(f"{model:<20} {res['accuracy']:<12.4f} {res['macro_f1']:<12.4f}")
+            print("="*80)
 
 
 if __name__ == '__main__':
