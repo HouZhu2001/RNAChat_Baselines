@@ -2275,7 +2275,7 @@ def main():
                        help='Path to GO data CSV (default: rna_go.csv)')
     parser.add_argument('--rna_type_data', type=str, default='rna_summary_2d_enhanced.csv',
                        help='Path to RNA type CSV (default: rna_summary_2d_enhanced.csv)')
-    parser.add_argument('--go_obo', type=str, default=None, 
+    parser.add_argument('--go_obo', type=str, default='go_basic.obo', 
                        help='Path to GO OBO file (optional - will use standard metrics only if not provided)')
     parser.add_argument('--output_dir', type=str, default='results/finegrained')
     parser.add_argument('--device', type=str, default='cuda')
