@@ -795,20 +795,35 @@ class RNAChatRNATypeClassifier:
 # ============================================================================
 
 def load_go_data(csv_path):
-    """Load GO annotation data"""
+    """Load GO annotation data from rna_go.csv format"""
     print(f"Loading GO data from {csv_path}...")
     df = pd.read_csv(csv_path)
     
-    # Expected columns: sequence, name, go_terms (comma-separated)
-    required_cols = ['sequence', 'go_terms']
+    # Required columns: rna_id and sequence
+    required_cols = ['rna_id', 'sequence']
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"Missing column: {col}")
     
     df = df.dropna(subset=required_cols)
     
-    # Parse GO terms
-    df['go_list'] = df['go_terms'].apply(lambda x: [t.strip() for t in str(x).split(',')])
+    # Get all GO term columns (all columns except rna_id and sequence)
+    go_term_columns = [col for col in df.columns if col not in ['rna_id', 'sequence']]
+    
+    # For each row, collect GO terms where the value is not empty/NaN
+    def extract_go_terms(row):
+        go_terms = []
+        for go_col in go_term_columns:
+            value = row[go_col]
+            # If the value is not empty/NaN, the RNA has this GO term
+            if pd.notna(value) and str(value).strip() != "":
+                go_terms.append(go_col)  # Use column name as GO term identifier
+        return go_terms
+    
+    df['go_list'] = df.apply(extract_go_terms, axis=1)
+    
+    # Filter out rows with no GO terms
+    df = df[df['go_list'].apply(len) > 0]
     
     # Split train/test
     n = len(df)
@@ -820,6 +835,7 @@ def load_go_data(csv_path):
     test_df = df.iloc[train_size+val_size:]
     
     print(f"Loaded: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
+    print(f"Total GO terms: {len(go_term_columns)}")
     return train_df, val_df, test_df
 
 
