@@ -1429,12 +1429,15 @@ class RNAChatGOPredictor:
         
         # Placeholder: Replace with actual RNAChat inference
         generated_texts = []
-        for seq, name in zip(sequences, names if names else ['RNA']*len(sequences)):
+        safe_names = names if names and len(names) == len(sequences) else [f"RNA_{i}" for i in range(len(sequences))]
+        for seq, name in zip(sequences, safe_names):
             # generated_text = self.rnachat.generate(seq, name)
             generated_text = f"This RNA molecule functions in transcription regulation and binds to proteins in the nucleus."
             generated_texts.append(generated_text)
         
         # Extract GO terms from generated text
+        if not self.go_terms_list:
+            return [[] for _ in sequences]
         go_predictions = self.predict_from_text(generated_texts)
         
         return go_predictions
@@ -1759,16 +1762,21 @@ def evaluate_rna_type_classification(model, test_df):
     """Evaluate RNA type classification"""
     sequences = test_df['sequence'].tolist()
     true_types = test_df['rna_type'].tolist()
+    names = test_df['name'].tolist() if 'name' in test_df.columns else None
     
-    if hasattr(model, 'predict'):
-        if 'name' in test_df.columns:
-            names = test_df['name'].tolist()
-            pred_types = model.predict(sequences, names)
-        else:
-            pred_types, _ = model.predict(sequences)
-    else:
-        # Neural model
-        pred_types = []  # Implement neural prediction
+    def _predict_types(any_model, seqs, nm):
+        # Try (sequences) first
+        try:
+            out = any_model.predict(seqs)
+        except TypeError:
+            # Try (sequences, names) if available
+            out = any_model.predict(seqs, nm) if nm is not None else any_model.predict(seqs)
+        # Normalize outputs
+        if isinstance(out, tuple):
+            return out[0]
+        return out
+    
+    pred_types = _predict_types(model, sequences, names) if hasattr(model, 'predict') else []
     
     # Compute metrics
     accuracy = accuracy_score(true_types, pred_types)
@@ -1871,6 +1879,21 @@ def run_go_prediction_benchmarks(train_df, val_df, test_df, go_graph=None, args=
         
         device = args.device if args and hasattr(args, 'device') else 'cuda'
         
+        import inspect
+        
+        def _safe_model_fit(m, seqs, labels, names, epochs=10, batch_size=8):
+            sig = inspect.signature(m.fit)
+            params = sig.parameters
+            kwargs = {}
+            if 'epochs' in params:
+                kwargs['epochs'] = epochs
+            if 'batch_size' in params:
+                kwargs['batch_size'] = batch_size
+            if 'names' in params:
+                return m.fit(seqs, labels, names=names, **kwargs)
+            else:
+                return m.fit(seqs, labels, **kwargs)
+        
         for model_name, ModelClass in foundation_models.items():
             print(f"\n--- {model_name} ---")
             try:
@@ -1878,7 +1901,7 @@ def run_go_prediction_benchmarks(train_df, val_df, test_df, go_graph=None, args=
                 
                 # Train
                 print(f"Training {model_name}...")
-                model.fit(train_seqs, train_annots, train_names, epochs=10, batch_size=8)
+                _safe_model_fit(model, train_seqs, train_annots, train_names, epochs=10, batch_size=8)
                 
                 # Evaluate
                 print(f"Evaluating {model_name}...")
@@ -2013,6 +2036,20 @@ def run_rna_type_benchmarks(train_df, val_df, test_df, args=None):
             'UniRep-RNA': UNIRep
         }
         
+        import inspect
+        def _safe_model_fit(m, seqs, labels, names, epochs=10, batch_size=8):
+            sig = inspect.signature(m.fit)
+            params = sig.parameters
+            kwargs = {}
+            if 'epochs' in params:
+                kwargs['epochs'] = epochs
+            if 'batch_size' in params:
+                kwargs['batch_size'] = batch_size
+            if 'names' in params:
+                return m.fit(seqs, labels, names=names, **kwargs)
+            else:
+                return m.fit(seqs, labels, **kwargs)
+        
         for model_name, ModelClass in foundation_models.items():
             print(f"\n--- {model_name} ---")
             try:
@@ -2020,7 +2057,7 @@ def run_rna_type_benchmarks(train_df, val_df, test_df, args=None):
                 
                 # Train
                 print(f"Training {model_name}...")
-                model.fit(train_seqs, train_types, train_names, epochs=10, batch_size=8)
+                _safe_model_fit(model, train_seqs, train_types, train_names, epochs=10, batch_size=8)
                 
                 # Evaluate
                 print(f"Evaluating {model_name}...")
