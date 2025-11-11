@@ -1221,11 +1221,11 @@ def save_results(results, task_name, output_dir='results/finegrained'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--task', type=str, required=True, default='all',
+    parser.add_argument('--task', type=str, required=False, default='all',
                        choices=['go_prediction', 'rna_type', 'subcellular', 'all'])
     parser.add_argument('--model', type=str, default='all',
                        help='Model to run: all, birwlgo, tfidf, deepgo, rnachat')
-    parser.add_argument('--data', type=str, required=True, default='rna_go.csv', help='Path to data CSV')
+    parser.add_argument('--data', type=str, required=False, default='rna_go.csv', help='Path to data CSV')
     parser.add_argument('--go_obo', type=str, default='go_basic.obo', help='Path to GO OBO file')
     parser.add_argument('--output_dir', type=str, default='results/finegrained')
     parser.add_argument('--device', type=str, default='cuda')

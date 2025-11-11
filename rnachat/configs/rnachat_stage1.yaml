@@ -1,0 +1,61 @@
+model:
+  arch: rnachat
+  model_type: pretrain_vicuna
+
+  freeze_rna_encoder: False
+  freeze_lp: False
+  freeze_llama: True
+
+  llama_model: "lmsys/vicuna-13b-v1.3"
+  prompt: ""
+
+  max_txt_len: 405
+  end_sym: "###"
+  low_resource: False
+  embedding_agg: 1
+  peft_ckpt: ""
+  stage1_ckpt: "rnachat/checkpoints/checkpoint_stage1.pth"
+
+datasets:
+  rna:
+    data_type: rna
+    build_info:
+      train:
+        storage: data/train_set
+
+run:
+  task: BaseTask
+  # optimizer
+  lr_sched: "linear_warmup_cosine_lr"
+  init_lr: 1e-5
+  min_lr: 1e-6
+  warmup_lr: 1e-6
+  accum_grad_iters: 4
+
+  weight_decay: 0.05
+  max_epoch: 5
+  # max_iters: 10
+  # iters_per_inner_epoch: 2
+  iters_per_epoch: 5000
+  batch_size_train: 1
+  batch_size_eval: 1
+  num_workers: 4
+  warmup_steps: 500
+
+  seed: 42
+  output_dir: "rnachat/checkpoints"
+
+  amp: True
+  resume_ckpt_path: null
+
+  printable: False # whether all ranks can print (True) or only rank 0 can print (False)
+
+  evaluate: False
+  train_splits: ["train"]
+  valid_splits: ["valid"]
+
+  device: "cuda"
+  world_size: 2
+  dist_url: "env://"
+  distributed: True
+  use_dist_eval_sampler: False

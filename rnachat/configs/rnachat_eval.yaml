@@ -1,0 +1,35 @@
+model:
+  arch: rnachat
+  model_type: pretrain_vicuna
+  freeze_rna_encoder: True
+  freeze_qformer: True
+  freeze_llama: False
+  freeze_lp: True
+
+  llama_model: "lmsys/vicuna-13b-v1.5"
+  
+  # generation configs
+  prompt: ""
+
+  max_txt_len: 405
+  end_sym: "###"
+  low_resource: True
+  peft_ckpt: 'rnachat/checkpoints/checkpoint_stage2.pth' # stage-2 ckpt
+  glm_load_path:  '' # should replace with your local path of protein GLM model.
+  stage1_ckpt: 'rnachat/checkpoints/checkpoint_stage1.pth' # should replace with your local path of glm ckpt
+
+datasets:
+  rna:
+    data_type: rna
+    build_info:
+      train:
+        storage: data/train_set
+
+run:
+  task: BaseTask #Your defined task
+  device: "cuda"
+  world_size: 1
+  dist_url: "env://"
+  distributed: True
+  printable: True
+
