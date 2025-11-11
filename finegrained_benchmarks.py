@@ -1071,19 +1071,25 @@ def evaluate_rna_type_classification(model, test_df):
     sequences = test_df['sequence'].tolist()
     true_types = test_df['rna_type'].tolist()
     
+    pred_types = []
+    probs = None
+    
     if hasattr(model, 'predict'):
         # Some models (e.g., RNAChatRNATypeClassifier) accept (sequences, names),
         # while traditional baselines accept only (sequences) and return (preds, probs).
         try:
-            # Try traditional baseline signature
-            pred_types, _ = model.predict(sequences)
+            result = model.predict(sequences)
         except TypeError:
-            # Fall back to (sequences, names) if available
             if 'name' in test_df.columns:
                 names = test_df['name'].tolist()
-                pred_types = model.predict(sequences, names)
+                result = model.predict(sequences, names)
             else:
-                pred_types = model.predict(sequences)
+                result = model.predict(sequences)
+        
+        if isinstance(result, tuple):
+            pred_types, probs = result
+        else:
+            pred_types = result
     else:
         # Neural model placeholder
         pred_types = []
