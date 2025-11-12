@@ -1903,11 +1903,25 @@ def evaluate_rna_type_classification(model, test_df):
     true_types = test_df['rna_type'].tolist()
     
     if hasattr(model, 'predict'):
-        if 'name' in test_df.columns:
-            names = test_df['name'].tolist()
-            pred_types = model.predict(sequences, names)
-        else:
-            pred_types, _ = model.predict(sequences)
+        # Try predict(sequences) first (most models)
+        try:
+            result = model.predict(sequences)
+            # Handle tuple return (predictions, probabilities)
+            if isinstance(result, tuple):
+                pred_types, _ = result
+            else:
+                pred_types = result
+        except TypeError:
+            # If that fails, try with names if available
+            if 'name' in test_df.columns:
+                names = test_df['name'].tolist()
+                result = model.predict(sequences, names)
+                if isinstance(result, tuple):
+                    pred_types, _ = result
+                else:
+                    pred_types = result
+            else:
+                raise
     else:
         # Neural model
         pred_types = []  # Implement neural prediction
