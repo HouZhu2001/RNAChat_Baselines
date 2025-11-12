@@ -114,3 +114,8 @@ training.log
 *.temp
 .DS_Store
 Thumbs.db
+
+\rnachat
+
+*.yaml
+*.sh

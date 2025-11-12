@@ -1482,7 +1482,14 @@ class RNAChatGOPredictor:
             sorted_gos = sorted(go_scores.items(), key=lambda x: x[1], reverse=True)
             pred_gos = [go_id for go_id, score in sorted_gos[:top_k]]
             
-            predictions.append(pred_gos if pred_gos else [self.go_terms_list[0].go_id])
+            # Fallback if no predictions
+            if not pred_gos:
+                if self.go_terms_list and len(self.go_terms_list) > 0:
+                    pred_gos = [self.go_terms_list[0].go_id]
+                else:
+                    pred_gos = []
+            
+            predictions.append(pred_gos)
         
         return predictions
     
@@ -1594,11 +1601,15 @@ def load_rna_type_data(csv_path):
     """Load RNA type classification data (expects sequence + rna_type columns)."""
     print(f"Loading RNA type data from {csv_path}...")
     df = pd.read_csv(csv_path)
+    
+    # Normalize column names (handle case variations)
+    df.columns = df.columns.str.strip().str.lower()
+    
     required_cols = ['sequence', 'rna_type']
     
     for col in required_cols:
         if col not in df.columns:
-            raise ValueError(f"Missing column: {col}")
+            raise ValueError(f"Missing column: {col}. Available columns: {list(df.columns)}")
     
     df = df.dropna(subset=required_cols)
     df['rna_type'] = df['rna_type'].astype(str).str.strip()
@@ -2007,9 +2018,12 @@ def run_go_prediction_benchmarks(train_df, val_df, test_df, go_graph=None, args=
             try:
                 model = ModelClass(num_labels=len(all_go_terms), task='go', device=device)
                 
-                # Train
+                # Train - only RNA-FM accepts names parameter
                 print(f"Training {model_name}...")
-                model.fit(train_seqs, train_annots, train_names, epochs=10, batch_size=8)
+                if model_name == 'RNA-FM' and train_names is not None:
+                    model.fit(train_seqs, train_annots, names=train_names, epochs=10, batch_size=8)
+                else:
+                    model.fit(train_seqs, train_annots, epochs=10, batch_size=8)
                 
                 # Evaluate
                 print(f"Evaluating {model_name}...")
@@ -2149,9 +2163,12 @@ def run_rna_type_benchmarks(train_df, val_df, test_df, args=None):
             try:
                 model = ModelClass(num_labels=num_types, task='type', device=device)
                 
-                # Train
+                # Train - only RNA-FM accepts names parameter
                 print(f"Training {model_name}...")
-                model.fit(train_seqs, train_types, train_names, epochs=10, batch_size=8)
+                if model_name == 'RNA-FM' and train_names is not None:
+                    model.fit(train_seqs, train_types, names=train_names, epochs=10, batch_size=8)
+                else:
+                    model.fit(train_seqs, train_types, epochs=10, batch_size=8)
                 
                 # Evaluate
                 print(f"Evaluating {model_name}...")
