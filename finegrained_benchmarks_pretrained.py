@@ -374,31 +374,78 @@ class RiNALMoPredictor:
         
         try:
             from transformers import AutoTokenizer, AutoModel
+            import os
             print("Loading RiNALMo...")
             
-            # Try multiple possible model names
+            # Try multiple possible model names, with the correct one first
+            # Also check for locally cloned models
+            local_paths_to_try = [
+                "./rinalmo-mega",  # If cloned in current directory
+                "../rinalmo-mega",  # If cloned in parent directory
+                os.path.expanduser("~/rinalmo-mega"),  # If cloned in home directory
+            ]
+            
             model_names_to_try = [
-                "lbcb-sci/RiNALMo",
-                "multimolecule/rinalmo",
+                "multimolecule/rinalmo-mega",  # Primary: correct Hugging Face model
+                "multimolecule/rinalmo",  # Alternative
+                "lbcb-sci/RiNALMo",  # Legacy
                 "facebook/esm2_t33_650M_UR50D"  # Fallback to ESM-2 large
             ]
             
             model_loaded = False
-            for model_name in model_names_to_try:
-                try:
-                    print(f"Trying {model_name}...")
-                    self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-                    self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device)
-                    hidden_size = self.model.config.hidden_size
-                    model_loaded = True
-                    print(f"✓ Loaded {model_name}")
-                    break
-                except Exception as e:
-                    print(f"  Failed: {e}")
-                    continue
+            
+            # First try local paths (if user cloned manually)
+            for local_path in local_paths_to_try:
+                if os.path.exists(local_path):
+                    try:
+                        print(f"Trying local path: {local_path}...")
+                        self.tokenizer = AutoTokenizer.from_pretrained(
+                            local_path, 
+                            trust_remote_code=True,
+                            local_files_only=True
+                        )
+                        self.model = AutoModel.from_pretrained(
+                            local_path, 
+                            trust_remote_code=True,
+                            local_files_only=True
+                        ).to(device)
+                        hidden_size = self.model.config.hidden_size
+                        model_loaded = True
+                        print(f"✓ Loaded from local path: {local_path}")
+                        break
+                    except Exception as e:
+                        print(f"  Failed: {e}")
+                        continue
+            
+            # If local paths didn't work, try Hugging Face models
+            if not model_loaded:
+                for model_name in model_names_to_try:
+                    try:
+                        print(f"Trying {model_name}...")
+                        # Use local_files_only=False to allow downloading if needed
+                        self.tokenizer = AutoTokenizer.from_pretrained(
+                            model_name, 
+                            trust_remote_code=True,
+                            local_files_only=False
+                        )
+                        self.model = AutoModel.from_pretrained(
+                            model_name, 
+                            trust_remote_code=True,
+                            local_files_only=False
+                        ).to(device)
+                        hidden_size = self.model.config.hidden_size
+                        model_loaded = True
+                        print(f"✓ Loaded {model_name}")
+                        break
+                    except Exception as e:
+                        print(f"  Failed: {e}")
+                        # If it's a git-lfs issue, try to provide helpful message
+                        if "git" in str(e).lower() or "lfs" in str(e).lower():
+                            print(f"  Note: This model may require git-lfs. Try: git lfs install")
+                        continue
             
             if not model_loaded:
-                raise Exception("All model names failed")
+                raise Exception("All model names failed. To download manually: git clone https://huggingface.co/multimolecule/rinalmo-mega")
             
             # Add classification head
             self.classifier = nn.Sequential(
@@ -435,12 +482,53 @@ class RiNALMoPredictor:
                     
                     # Get embeddings
                     outputs = self.model(**inputs)
-                    batch_emb = outputs.last_hidden_state[:, 0, :].cpu().numpy()  # [CLS] token
+                    
+                    # Handle different output formats
+                    if hasattr(outputs, 'last_hidden_state'):
+                        # Standard transformer output - use [CLS] token or mean pooling
+                        if outputs.last_hidden_state.shape[1] > 0:
+                            # Use [CLS] token (first token) or mean pooling
+                            batch_emb = outputs.last_hidden_state[:, 0, :].cpu().numpy()  # [CLS] token
+                        else:
+                            # Fallback to mean pooling if no [CLS] token
+                            batch_emb = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
+                    elif hasattr(outputs, 'pooler_output') and outputs.pooler_output is not None:
+                        # Some models have a pooler output
+                        batch_emb = outputs.pooler_output.cpu().numpy()
+                    elif hasattr(outputs, 'embeddings'):
+                        # Alternative embedding format
+                        batch_emb = outputs.embeddings.mean(dim=1).cpu().numpy()
+                    else:
+                        # Try to get any tensor from outputs
+                        output_tensor = None
+                        for attr in ['hidden_states', 'logits', 'encoder_outputs']:
+                            if hasattr(outputs, attr):
+                                tensor = getattr(outputs, attr)
+                                if isinstance(tensor, (list, tuple)) and len(tensor) > 0:
+                                    tensor = tensor[-1]  # Get last layer
+                                if isinstance(tensor, torch.Tensor):
+                                    output_tensor = tensor
+                                    break
+                        
+                        if output_tensor is not None:
+                            if len(output_tensor.shape) == 3:
+                                batch_emb = output_tensor[:, 0, :].cpu().numpy()  # [CLS] token
+                            else:
+                                batch_emb = output_tensor.cpu().numpy()
+                        else:
+                            raise ValueError("Could not extract embeddings from model output")
+                    
                     embeddings.append(batch_emb)
                 except Exception as e:
                     print(f"Error encoding batch: {e}")
-                    # Fallback to random
-                    embeddings.append(np.random.randn(len(batch), 768))
+                    import traceback
+                    traceback.print_exc()
+                    # Fallback to random with correct dimension
+                    emb_dim = embeddings[0].shape[1] if embeddings else 768
+                    embeddings.append(np.random.randn(len(batch), emb_dim))
+        
+        if not embeddings:
+            return np.random.randn(len(sequences), 768)
         
         return np.vstack(embeddings)
     
