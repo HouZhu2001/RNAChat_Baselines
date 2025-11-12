@@ -1564,7 +1564,20 @@ class RNAChatGOPredictor:
         """Extract GO terms from RNAChat generated text, including MCQ format responses"""
         predictions = []
         
+        # Check if go_terms_list is available
+        if not self.go_terms_list or len(self.go_terms_list) == 0:
+            print("Warning: go_terms_list is empty, returning empty predictions")
+            return [[] for _ in generated_texts]
+        
         for text in generated_texts:
+            if not text or len(text.strip()) == 0:
+                # Empty text - use fallback
+                if hasattr(self.go_terms_list[0], 'go_id'):
+                    predictions.append([self.go_terms_list[0].go_id])
+                else:
+                    predictions.append([])
+                continue
+                
             text_lower = text.lower()
             text_upper = text.upper()
             
@@ -1573,24 +1586,25 @@ class RNAChatGOPredictor:
             
             # First, check for MCQ format responses (Q1: A, Question 1: A, etc.)
             # These indicate positive answers for the first 15 GO terms
-            if self.go_terms_list and len(self.go_terms_list) > 0:
-                sample_gos = self.go_terms_list[:15]
-                for idx, go_term in enumerate(sample_gos):
-                    # Look for patterns like "Q1: A", "Question 1: A", "Q1 A", etc.
-                    question_patterns = [
-                        f"q{idx + 1}: a",
-                        f"question {idx + 1}: a",
-                        f"q{idx + 1} a",
-                        f"question {idx + 1} a",
-                        f"q{idx + 1}:a",
-                    ]
+            sample_gos = self.go_terms_list[:15]
+            for idx, go_term in enumerate(sample_gos):
+                if not hasattr(go_term, 'go_id'):
+                    continue
                     
-                    for pattern in question_patterns:
-                        if pattern in text_lower:
-                            # Positive answer found - add high score
-                            if hasattr(go_term, 'go_id'):
-                                go_scores[go_term.go_id] = go_scores.get(go_term.go_id, 0) + 15
-                            break
+                # Look for patterns like "Q1: A", "Question 1: A", "Q1 A", etc.
+                question_patterns = [
+                    f"q{idx + 1}: a",
+                    f"question {idx + 1}: a",
+                    f"q{idx + 1} a",
+                    f"question {idx + 1} a",
+                    f"q{idx + 1}:a",
+                ]
+                
+                for pattern in question_patterns:
+                    if pattern in text_lower:
+                        # Positive answer found - add high score
+                        go_scores[go_term.go_id] = go_scores.get(go_term.go_id, 0) + 15
+                        break
             
             # Then score all GO terms based on keyword matching
             for go_term in self.go_terms_list:
@@ -1598,30 +1612,45 @@ class RNAChatGOPredictor:
                     continue
                     
                 score = go_scores.get(go_term.go_id, 0)
-                go_name = go_term.name.lower()
+                go_name = go_term.name.lower() if hasattr(go_term, 'name') and go_term.name else ""
                 
-                # Exact match
-                if go_name in text_lower:
+                # Exact match of GO term name
+                if go_name and go_name in text_lower:
                     score += 10
                 
-                # Keyword matching
-                words = go_name.split()
-                for word in words:
-                    if len(word) > 2 and word in text_lower:
-                        score += 1
+                # Partial match of GO term name (substring)
+                if go_name:
+                    # Check if significant words from GO name appear
+                    words = [w for w in go_name.split() if len(w) > 3]  # Only meaningful words
+                    matched_words = sum(1 for word in words if word in text_lower)
+                    if matched_words > 0:
+                        score += matched_words * 2  # More weight for multiple word matches
+                
+                # Individual keyword matching (more lenient)
+                if go_name:
+                    words = go_name.split()
+                    for word in words:
+                        if len(word) > 2 and word in text_lower:
+                            score += 1
                 
                 # GO ID matching (e.g., "GO:0008150")
-                if hasattr(go_term, 'go_id'):
-                    go_id_lower = go_term.go_id.lower()
-                    if go_id_lower in text_lower or go_id_lower.replace(':', '') in text_lower:
-                        score += 8
+                go_id_lower = go_term.go_id.lower()
+                if go_id_lower in text_lower or go_id_lower.replace(':', '') in text_lower:
+                    score += 8
                 
                 # Definition matching
-                if hasattr(go_term, 'definition'):
+                if hasattr(go_term, 'definition') and go_term.definition:
                     def_words = go_term.definition.lower().split()
-                    for word in def_words[:10]:  # Top 10 words from definition
-                        if len(word) > 4 and word in text_lower:
+                    for word in def_words[:15]:  # Top 15 words from definition
+                        if len(word) > 3 and word in text_lower:
                             score += 0.5
+                
+                # General biological process keywords (more lenient matching)
+                bio_keywords = ['regulation', 'process', 'metabolism', 'signaling', 'transcription', 
+                               'translation', 'binding', 'activity', 'function', 'pathway']
+                for keyword in bio_keywords:
+                    if keyword in text_lower and keyword in go_name:
+                        score += 1
                 
                 if score > 0:
                     go_scores[go_term.go_id] = score
@@ -1630,10 +1659,17 @@ class RNAChatGOPredictor:
             sorted_gos = sorted(go_scores.items(), key=lambda x: x[1], reverse=True)
             pred_gos = [go_id for go_id, score in sorted_gos[:top_k]]
             
-            # Fallback if no predictions
+            # Fallback if no predictions - use top GO terms by default
             if not pred_gos:
-                if self.go_terms_list and len(self.go_terms_list) > 0:
-                    pred_gos = [self.go_terms_list[0].go_id]
+                # Try to get at least top-3 most common GO terms as fallback
+                if len(self.go_terms_list) >= 3:
+                    pred_gos = [self.go_terms_list[i].go_id for i in range(min(3, len(self.go_terms_list))) 
+                               if hasattr(self.go_terms_list[i], 'go_id')]
+                elif len(self.go_terms_list) > 0:
+                    if hasattr(self.go_terms_list[0], 'go_id'):
+                        pred_gos = [self.go_terms_list[0].go_id]
+                    else:
+                        pred_gos = []
                 else:
                     pred_gos = []
             
@@ -1746,6 +1782,21 @@ class RNAChatGOPredictor:
         # Extract GO terms from generated text
         print(f"Extracting GO terms from {len(generated_texts)} generated descriptions...")
         go_predictions = self.predict_from_text(generated_texts, top_k=15)
+        
+        # Debug: Check if predictions are empty
+        empty_count = sum(1 for pred in go_predictions if len(pred) == 0)
+        if empty_count > 0:
+            print(f"Warning: {empty_count}/{len(go_predictions)} predictions are empty. Using fallback GO terms.")
+            # Ensure all predictions have at least one GO term
+            for i, pred in enumerate(go_predictions):
+                if len(pred) == 0 and self.go_terms_list and len(self.go_terms_list) > 0:
+                    # Use first few GO terms as fallback
+                    fallback_count = min(3, len(self.go_terms_list))
+                    go_predictions[i] = [self.go_terms_list[j].go_id for j in range(fallback_count) 
+                                        if hasattr(self.go_terms_list[j], 'go_id')]
+        
+        avg_preds = np.mean([len(p) for p in go_predictions]) if go_predictions else 0
+        print(f"✓ GO term extraction complete. Average {avg_preds:.1f} GO terms per prediction.")
         
         return go_predictions
 
