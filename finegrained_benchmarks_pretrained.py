@@ -1815,6 +1815,7 @@ def evaluate_go_prediction(model, test_df, go_graph=None, model_type='traditiona
     sequences = test_df['sequence'].tolist()
     true_annotations = test_df['go_list'].tolist()
     names = test_df['name'].tolist() if 'name' in test_df.columns else None
+    rna_ids = test_df['rna_id'].tolist() if 'rna_id' in test_df.columns else [f"RNA_{i}" for i in range(len(sequences))]
     
     # Get predictions
     if model_type == 'traditional':
@@ -1894,6 +1895,14 @@ def evaluate_go_prediction(model, test_df, go_graph=None, model_type='traditiona
             results[f'{ns}_recall'] = 0.0
             results[f'{ns}_f1'] = 0.0
     
+    # Store predictions for analysis (all test samples)
+    results['predictions'] = {
+        'rna_ids': rna_ids,
+        'true_annotations': true_annotations,
+        'predicted_annotations': predictions,
+        'num_test_samples': len(sequences)
+    }
+    
     return results
 
 
@@ -1901,6 +1910,8 @@ def evaluate_rna_type_classification(model, test_df):
     """Evaluate RNA type classification"""
     sequences = test_df['sequence'].tolist()
     true_types = test_df['rna_type'].tolist()
+    rna_ids = test_df['id'].tolist() if 'id' in test_df.columns else [f"RNA_{i}" for i in range(len(sequences))]
+    names = test_df['name'].tolist() if 'name' in test_df.columns else None
     
     if hasattr(model, 'predict'):
         # Try predict(sequences) first (most models)
@@ -1908,23 +1919,26 @@ def evaluate_rna_type_classification(model, test_df):
             result = model.predict(sequences)
             # Handle tuple return (predictions, probabilities)
             if isinstance(result, tuple):
-                pred_types, _ = result
+                pred_types, pred_probs = result
             else:
                 pred_types = result
+                pred_probs = None
         except TypeError:
             # If that fails, try with names if available
             if 'name' in test_df.columns:
                 names = test_df['name'].tolist()
                 result = model.predict(sequences, names)
                 if isinstance(result, tuple):
-                    pred_types, _ = result
+                    pred_types, pred_probs = result
                 else:
                     pred_types = result
+                    pred_probs = None
             else:
                 raise
     else:
         # Neural model
         pred_types = []  # Implement neural prediction
+        pred_probs = None
     
     # Compute metrics
     accuracy = accuracy_score(true_types, pred_types)
@@ -1946,6 +1960,13 @@ def evaluate_rna_type_classification(model, test_df):
             'precision': per_class_metrics[0].tolist(),
             'recall': per_class_metrics[1].tolist(),
             'f1': per_class_metrics[2].tolist()
+        },
+        'predictions': {
+            'rna_ids': rna_ids,
+            'names': names if names else None,
+            'true_types': true_types,
+            'predicted_types': pred_types,
+            'num_test_samples': len(sequences)
         }
     }
     
@@ -2077,6 +2098,7 @@ def evaluate_foundation_model(model, test_df, go_graph=None):
     sequences = test_df['sequence'].tolist()
     true_annotations = test_df['go_list'].tolist()
     names = test_df['name'].tolist() if 'name' in test_df.columns else None
+    rna_ids = test_df['rna_id'].tolist() if 'rna_id' in test_df.columns else [f"RNA_{i}" for i in range(len(sequences))]
     
     # Get predictions
     if hasattr(model, 'predict'):
@@ -2117,6 +2139,14 @@ def evaluate_foundation_model(model, test_df, go_graph=None):
         results['hierarchical_precision'] = 0.0
         results['hierarchical_recall'] = 0.0
         results['hierarchical_f1'] = 0.0
+    
+    # Store predictions for analysis (all test samples)
+    results['predictions'] = {
+        'rna_ids': rna_ids,
+        'true_annotations': true_annotations,
+        'predicted_annotations': predictions,
+        'num_test_samples': len(sequences)
+    }
     
     return results
 
@@ -2209,6 +2239,7 @@ def evaluate_foundation_type_classifier(model, test_df):
     sequences = test_df['sequence'].tolist()
     true_types = test_df['rna_type'].tolist()
     names = test_df['name'].tolist() if 'name' in test_df.columns else None
+    rna_ids = test_df['id'].tolist() if 'id' in test_df.columns else [f"RNA_{i}" for i in range(len(sequences))]
     
     # Get predictions
     if hasattr(model, 'predict'):
@@ -2238,6 +2269,13 @@ def evaluate_foundation_type_classifier(model, test_df):
             'precision': per_class_metrics[0].tolist(),
             'recall': per_class_metrics[1].tolist(),
             'f1': per_class_metrics[2].tolist()
+        },
+        'predictions': {
+            'rna_ids': rna_ids,
+            'names': names if names else None,
+            'true_types': true_types,
+            'predicted_types': pred_types,
+            'num_test_samples': len(sequences)
         }
     }
     
@@ -2248,11 +2286,54 @@ def save_results(results, task_name, output_dir='results/finegrained'):
     """Save results to JSON and generate LaTeX table"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    # Save JSON
+    # Save JSON (with predictions)
     json_path = f"{output_dir}/{task_name}_results.json"
     with open(json_path, 'w') as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved to {json_path}")
+    
+    # Save detailed predictions to CSV for each model
+    predictions_dir = Path(output_dir) / f"{task_name}_predictions"
+    predictions_dir.mkdir(exist_ok=True)
+    
+    for model_name, model_results in results.items():
+        if 'predictions' not in model_results:
+            continue
+            
+        pred_data = model_results['predictions']
+        
+        if 'go' in task_name.lower():
+            # GO prediction format
+            rows = []
+            for i in range(pred_data['num_test_samples']):
+                row = {
+                    'rna_id': pred_data['rna_ids'][i] if i < len(pred_data['rna_ids']) else f"RNA_{i}",
+                    'true_go_terms': ','.join(pred_data['true_annotations'][i]) if i < len(pred_data['true_annotations']) else '',
+                    'predicted_go_terms': ','.join(pred_data['predicted_annotations'][i]) if i < len(pred_data['predicted_annotations']) else ''
+                }
+                rows.append(row)
+            
+            pred_df = pd.DataFrame(rows)
+            csv_path = predictions_dir / f"{model_name}_predictions.csv"
+            pred_df.to_csv(csv_path, index=False)
+            print(f"  Predictions saved to {csv_path}")
+            
+        elif 'type' in task_name.lower():
+            # RNA type classification format
+            rows = []
+            for i in range(pred_data['num_test_samples']):
+                row = {
+                    'rna_id': pred_data['rna_ids'][i] if i < len(pred_data['rna_ids']) else f"RNA_{i}",
+                    'name': pred_data['names'][i] if pred_data.get('names') and pred_data['names'] and i < len(pred_data['names']) else '',
+                    'true_type': pred_data['true_types'][i] if i < len(pred_data['true_types']) else '',
+                    'predicted_type': pred_data['predicted_types'][i] if i < len(pred_data['predicted_types']) else ''
+                }
+                rows.append(row)
+            
+            pred_df = pd.DataFrame(rows)
+            csv_path = predictions_dir / f"{model_name}_predictions.csv"
+            pred_df.to_csv(csv_path, index=False)
+            print(f"  Predictions saved to {csv_path}")
     
     # Generate LaTeX table
     latex_path = f"{output_dir}/{task_name}_table.tex"
