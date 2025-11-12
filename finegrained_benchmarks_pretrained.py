@@ -1421,6 +1421,8 @@ class RNAChatGOPredictor:
         try:
             import sys
             import os
+            import torch
+            
             # Add RNAChat to path if it exists
             rnachat_paths = [
                 '/RNAChat/rnachat',
@@ -1437,13 +1439,17 @@ class RNAChatGOPredictor:
             
             # Try to import and load RNAChat
             try:
-                from rnachat import RNAChat  # Adjust import based on actual module structure
-                # Try to load from checkpoint if path provided
+                from rnachat.models import load_model
+                from omegaconf import OmegaConf
+                
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                
+                # Try to find checkpoint
+                checkpoint_path = None
                 if rnachat_model_path and os.path.exists(rnachat_model_path):
-                    self.rnachat = RNAChat.load_from_checkpoint(rnachat_model_path)
-                    print("✓ RNAChat model loaded from checkpoint")
+                    checkpoint_path = rnachat_model_path
                 else:
-                    # Try default checkpoint location
+                    # Try default checkpoint locations
                     default_paths = [
                         '/RNAChat/rnachat/checkpoints',
                         'rnachat/checkpoints',
@@ -1451,26 +1457,69 @@ class RNAChatGOPredictor:
                     ]
                     for cp_path in default_paths:
                         if os.path.exists(cp_path):
-                            # Try to find latest checkpoint
                             import glob
-                            checkpoints = glob.glob(os.path.join(cp_path, '*.ckpt')) + \
-                                        glob.glob(os.path.join(cp_path, '*.pth'))
+                            # Look for checkpoint files
+                            checkpoints = glob.glob(os.path.join(cp_path, '*.pth')) + \
+                                        glob.glob(os.path.join(cp_path, '*.ckpt'))
                             if checkpoints:
-                                latest = max(checkpoints, key=os.path.getmtime)
-                                self.rnachat = RNAChat.load_from_checkpoint(latest)
-                                print(f"✓ RNAChat model loaded from {latest}")
+                                # Prefer checkpoint_stage2, then latest
+                                stage2 = [c for c in checkpoints if 'stage2' in c.lower()]
+                                if stage2:
+                                    checkpoint_path = max(stage2, key=os.path.getmtime)
+                                else:
+                                    checkpoint_path = max(checkpoints, key=os.path.getmtime)
                                 break
-            except ImportError:
-                # Try alternative import patterns
-                try:
-                    import rnachat.model as rnachat_model
-                    self.rnachat = rnachat_model.RNAChat()
-                    print("✓ RNAChat model loaded (alternative import)")
-                except:
-                    print("⚠ RNAChat not found, will use placeholder generation")
+                
+                if checkpoint_path:
+                    print(f"Loading RNAChat from checkpoint: {checkpoint_path}")
+                    # Load model - need to specify model_type (check configs for available types)
+                    # Default to pretrain_vicuna based on PRETRAINED_MODEL_CONFIG_DICT
+                    try:
+                        self.rnachat = load_model(
+                            name="rnachat",
+                            model_type="pretrain_vicuna",  # Adjust based on your config
+                            is_eval=True,
+                            device=device,
+                            checkpoint=checkpoint_path
+                        )
+                        print("✓ RNAChat model loaded successfully")
+                    except Exception as e:
+                        print(f"⚠ Failed to load with load_model: {e}")
+                        # Try direct instantiation and loading
+                        try:
+                            from rnachat.models.rnachat import RNAChat
+                            # Initialize with default config (matching rnachat_stage2.yaml)
+                            self.rnachat = RNAChat(
+                                device=torch.device(device),
+                                freeze_rna_encoder=True,
+                                llama_model="lmsys/vicuna-13b-v1.3",  # From config
+                                freeze_llama=True,
+                                low_resource=True  # Use low resource mode for inference
+                            )
+                            # Load checkpoint
+                            ckpt = torch.load(checkpoint_path, map_location='cpu')
+                            if 'model' in ckpt:
+                                self.rnachat.load_state_dict(ckpt['model'], strict=False)
+                            else:
+                                self.rnachat.load_state_dict(ckpt, strict=False)
+                            self.rnachat = self.rnachat.to(device)
+                            self.rnachat.eval()
+                            print("✓ RNAChat model loaded (direct method)")
+                        except Exception as e2:
+                            print(f"⚠ Direct loading also failed: {e2}")
+                            self.rnachat = None
+                else:
+                    print("⚠ No checkpoint found, RNAChat will use placeholder generation")
+                    self.rnachat = None
+                    
+            except ImportError as e:
+                print(f"⚠ Could not import RNAChat modules: {e}")
+                self.rnachat = None
         except Exception as e:
             print(f"⚠ Could not load RNAChat model: {e}")
-            print("Will use placeholder generation")
+            import traceback
+            traceback.print_exc()
+            self.rnachat = None
         
         # GO term extraction patterns
         self.go_patterns = self._build_go_patterns()
@@ -1582,26 +1631,31 @@ class RNAChatGOPredictor:
             generated_text = ""
             if self.rnachat is not None:
                 try:
-                    # Try different methods to generate
-                    if hasattr(self.rnachat, 'generate'):
-                        generated_text = str(self.rnachat.generate(prompt)).strip()
-                    elif hasattr(self.rnachat, 'predict'):
-                        generated_text = str(self.rnachat.predict(prompt)).strip()
-                    elif hasattr(self.rnachat, 'chat') or hasattr(self.rnachat, '__call__'):
-                        # Try calling directly
-                        try:
-                            generated_text = str(self.rnachat(prompt)).strip()
-                        except:
-                            generated_text = str(self.rnachat.chat(prompt)).strip()
+                    # RNAChat.generate expects samples dict with "seq" and optional "prompt"
+                    samples = {
+                        "seq": [str(seq)],
+                        "prompt": [prompt]
+                    }
+                    
+                    # Generate with RNAChat
+                    generated_texts_list = self.rnachat.generate(
+                        samples,
+                        max_length=512,  # Adjust based on needs
+                        num_beams=3,
+                        temperature=0.7,
+                        do_sample=True,
+                        repetition_penalty=1.2
+                    )
+                    
+                    if generated_texts_list and len(generated_texts_list) > 0:
+                        generated_text = str(generated_texts_list[0]).strip()
                     else:
-                        # Try to find inference method
-                        if hasattr(self.rnachat, 'model'):
-                            # If it has a model attribute, try to use it
-                            import torch
-                            # This is a fallback - adjust based on actual RNAChat API
-                            generated_text = f"Generated description for {name} using RNAChat model."
+                        generated_text = ""
+                        
                 except Exception as e:
                     print(f"Warning: RNAChat generation failed for {name}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     generated_text = ""
             
             # Fallback to placeholder if generation failed
