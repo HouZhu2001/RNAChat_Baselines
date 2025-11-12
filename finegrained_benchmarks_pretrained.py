@@ -133,7 +133,19 @@ def compute_multilabel_metrics(y_true, y_pred, y_scores=None):
         except:
             pass
     
-    return metrics
+    # Convert all numpy types to Python native types for JSON serialization
+    converted_metrics = {}
+    for key, value in metrics.items():
+        if isinstance(value, (np.integer, np.floating, np.bool_)):
+            converted_metrics[key] = value.item()
+        elif isinstance(value, np.ndarray):
+            converted_metrics[key] = value.tolist()
+        elif isinstance(value, (np.generic,)):
+            converted_metrics[key] = value.item()
+        else:
+            converted_metrics[key] = value
+    
+    return converted_metrics
 
 
 def compute_hierarchical_metrics(y_true, y_pred, go_graph):
@@ -1866,20 +1878,16 @@ def build_go_graph_from_obo(obo_path):
                 elif current_term is not None:
                     if line.startswith('id:'):
                         current_term['id'] = line.split('id:')[1].strip()
-                    
                     elif line.startswith('name:'):
                         current_term['name'] = line.split('name:')[1].strip()
-                    
                     elif line.startswith('namespace:'):
                         current_term['namespace'] = line.split('namespace:')[1].strip()
-                    
                     elif line.startswith('def:'):
                         current_term['def'] = line.split('def:')[1].strip()
-                    
                     elif line.startswith('is_a:'):
                         parent = line.split('is_a:')[1].split('!')[0].strip()
                         current_term['parents'].append(parent)
-        
+    
         # Don't forget last term
         if current_term and 'id' in current_term:
             namespace_map = {
@@ -1889,16 +1897,16 @@ def build_go_graph_from_obo(obo_path):
             }
             ns = namespace_map.get(current_term.get('namespace', 'biological_process'), 'BP')
             
-            go_term = GOTerm(
+        go_term = GOTerm(
                 current_term['id'],
                 current_term.get('name', current_term['id']),
                 ns,
                 current_term.get('def', '')
-            )
-            go_graph.add_term(go_term)
-            
-            for parent in current_term.get('parents', []):
-                go_graph.add_relationship(current_term['id'], parent)
+        )
+        go_graph.add_term(go_term)
+        
+        for parent in current_term.get('parents', []):
+            go_graph.add_relationship(current_term['id'], parent)
             
             term_count += 1
         
@@ -2118,22 +2126,39 @@ def evaluate_rna_type_classification(model, test_df):
         true_types, pred_types, average=None, zero_division=0
     )
     
+    # Convert numpy arrays to lists
+    def to_list(arr):
+        if hasattr(arr, 'tolist'):
+            return arr.tolist()
+        elif isinstance(arr, np.ndarray):
+            return arr.tolist()
+        else:
+            return list(arr)
+    
+    # Ensure predictions are lists, not numpy arrays
+    if isinstance(pred_types, np.ndarray):
+        pred_types = pred_types.tolist()
+    if isinstance(true_types, list) and len(true_types) > 0 and isinstance(true_types[0], np.str_):
+        true_types = [str(t) for t in true_types]
+    if isinstance(pred_types, list) and len(pred_types) > 0 and isinstance(pred_types[0], np.str_):
+        pred_types = [str(t) for t in pred_types]
+    
     results = {
-        'accuracy': accuracy,
-        'macro_precision': precision,
-        'macro_recall': recall,
-        'macro_f1': f1,
+        'accuracy': float(accuracy),
+        'macro_precision': float(precision),
+        'macro_recall': float(recall),
+        'macro_f1': float(f1),
         'per_class': {
-            'precision': per_class_metrics[0].tolist(),
-            'recall': per_class_metrics[1].tolist(),
-            'f1': per_class_metrics[2].tolist()
+            'precision': to_list(per_class_metrics[0]),
+            'recall': to_list(per_class_metrics[1]),
+            'f1': to_list(per_class_metrics[2])
         },
         'predictions': {
-            'rna_ids': rna_ids,
-            'names': names if names else None,
-            'true_types': true_types,
-            'predicted_types': pred_types,
-            'num_test_samples': len(sequences)
+            'rna_ids': list(rna_ids) if not isinstance(rna_ids, list) else rna_ids,
+            'names': list(names) if names and not isinstance(names, list) else names,
+            'true_types': list(true_types) if not isinstance(true_types, list) else true_types,
+            'predicted_types': list(pred_types) if not isinstance(pred_types, list) else pred_types,
+            'num_test_samples': int(len(sequences))
         }
     }
     
@@ -2427,22 +2452,39 @@ def evaluate_foundation_type_classifier(model, test_df):
         true_types, pred_types, average=None, zero_division=0
     )
     
+    # Convert numpy arrays to lists
+    def to_list(arr):
+        if hasattr(arr, 'tolist'):
+            return arr.tolist()
+        elif isinstance(arr, np.ndarray):
+            return arr.tolist()
+        else:
+            return list(arr)
+    
+    # Ensure predictions are lists, not numpy arrays
+    if isinstance(pred_types, np.ndarray):
+        pred_types = pred_types.tolist()
+    if isinstance(true_types, list) and len(true_types) > 0 and isinstance(true_types[0], np.str_):
+        true_types = [str(t) for t in true_types]
+    if isinstance(pred_types, list) and len(pred_types) > 0 and isinstance(pred_types[0], np.str_):
+        pred_types = [str(t) for t in pred_types]
+    
     results = {
-        'accuracy': accuracy,
-        'macro_precision': precision,
-        'macro_recall': recall,
-        'macro_f1': f1,
+        'accuracy': float(accuracy),
+        'macro_precision': float(precision),
+        'macro_recall': float(recall),
+        'macro_f1': float(f1),
         'per_class': {
-            'precision': per_class_metrics[0].tolist(),
-            'recall': per_class_metrics[1].tolist(),
-            'f1': per_class_metrics[2].tolist()
+            'precision': to_list(per_class_metrics[0]),
+            'recall': to_list(per_class_metrics[1]),
+            'f1': to_list(per_class_metrics[2])
         },
         'predictions': {
-            'rna_ids': rna_ids,
-            'names': names if names else None,
-            'true_types': true_types,
-            'predicted_types': pred_types,
-            'num_test_samples': len(sequences)
+            'rna_ids': list(rna_ids) if not isinstance(rna_ids, list) else rna_ids,
+            'names': list(names) if names and not isinstance(names, list) else names,
+            'true_types': list(true_types) if not isinstance(true_types, list) else true_types,
+            'predicted_types': list(pred_types) if not isinstance(pred_types, list) else pred_types,
+            'num_test_samples': int(len(sequences))
         }
     }
     
@@ -2458,29 +2500,56 @@ def save_results(results, task_name, output_dir='results/finegrained'):
         """Recursively convert numpy arrays and other non-serializable types to Python types"""
         if isinstance(obj, np.ndarray):
             return obj.tolist()
-        elif isinstance(obj, (np.integer, np.floating)):
+        elif isinstance(obj, (np.integer, np.floating, np.bool_)):
+            return obj.item()
+        elif isinstance(obj, (np.generic,)):
             return obj.item()
         elif isinstance(obj, dict):
             return {key: convert_to_serializable(value) for key, value in obj.items()}
         elif isinstance(obj, (list, tuple)):
             return [convert_to_serializable(item) for item in obj]
+        elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):
+            # Handle other iterables
+            try:
+                return [convert_to_serializable(item) for item in obj]
+            except:
+                return str(obj)
         else:
             return obj
     
-    # Convert results to JSON-serializable format
+    # Convert results to JSON-serializable format (deep copy and convert)
     serializable_results = convert_to_serializable(results)
     
     # Save JSON (with predictions)
     json_path = f"{output_dir}/{task_name}_results.json"
-    with open(json_path, 'w') as f:
-        json.dump(serializable_results, f, indent=2)
-    print(f"\nResults saved to {json_path}")
+    try:
+        with open(json_path, 'w') as f:
+            json.dump(serializable_results, f, indent=2)
+        print(f"\nResults saved to {json_path}")
+    except TypeError as e:
+        print(f"Error saving JSON: {e}")
+        # Try one more time with more aggressive conversion
+        import copy
+        results_copy = copy.deepcopy(results)
+        # Convert all numpy types
+        for model_name, model_res in results_copy.items():
+            if isinstance(model_res, dict):
+                for key, value in model_res.items():
+                    if isinstance(value, np.ndarray):
+                        model_res[key] = value.tolist()
+                    elif isinstance(value, (np.integer, np.floating, np.bool_)):
+                        model_res[key] = value.item()
+        serializable_results = convert_to_serializable(results_copy)
+        with open(json_path, 'w') as f:
+            json.dump(serializable_results, f, indent=2)
+        print(f"Results saved to {json_path} (after additional conversion)")
     
     # Save detailed predictions to CSV for each model
     predictions_dir = Path(output_dir) / f"{task_name}_predictions"
     predictions_dir.mkdir(exist_ok=True)
     
-    for model_name, model_results in results.items():
+    # Use serializable_results for CSV generation to avoid numpy issues
+    for model_name, model_results in serializable_results.items():
         if 'predictions' not in model_results:
             continue
             
