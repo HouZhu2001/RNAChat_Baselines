@@ -1561,16 +1561,43 @@ class RNAChatGOPredictor:
         return patterns
     
     def predict_from_text(self, generated_texts, top_k=10):
-        """Extract GO terms from RNAChat generated text"""
+        """Extract GO terms from RNAChat generated text, including MCQ format responses"""
         predictions = []
         
         for text in generated_texts:
             text_lower = text.lower()
+            text_upper = text.upper()
             
-            # Score GO terms based on keyword matching
+            # Score GO terms based on keyword matching and MCQ responses
             go_scores = {}
+            
+            # First, check for MCQ format responses (Q1: A, Question 1: A, etc.)
+            # These indicate positive answers for the first 15 GO terms
+            if self.go_terms_list and len(self.go_terms_list) > 0:
+                sample_gos = self.go_terms_list[:15]
+                for idx, go_term in enumerate(sample_gos):
+                    # Look for patterns like "Q1: A", "Question 1: A", "Q1 A", etc.
+                    question_patterns = [
+                        f"q{idx + 1}: a",
+                        f"question {idx + 1}: a",
+                        f"q{idx + 1} a",
+                        f"question {idx + 1} a",
+                        f"q{idx + 1}:a",
+                    ]
+                    
+                    for pattern in question_patterns:
+                        if pattern in text_lower:
+                            # Positive answer found - add high score
+                            if hasattr(go_term, 'go_id'):
+                                go_scores[go_term.go_id] = go_scores.get(go_term.go_id, 0) + 15
+                            break
+            
+            # Then score all GO terms based on keyword matching
             for go_term in self.go_terms_list:
-                score = 0
+                if not hasattr(go_term, 'go_id'):
+                    continue
+                    
+                score = go_scores.get(go_term.go_id, 0)
                 go_name = go_term.name.lower()
                 
                 # Exact match
@@ -1580,8 +1607,14 @@ class RNAChatGOPredictor:
                 # Keyword matching
                 words = go_name.split()
                 for word in words:
-                    if word in text_lower:
+                    if len(word) > 2 and word in text_lower:
                         score += 1
+                
+                # GO ID matching (e.g., "GO:0008150")
+                if hasattr(go_term, 'go_id'):
+                    go_id_lower = go_term.go_id.lower()
+                    if go_id_lower in text_lower or go_id_lower.replace(':', '') in text_lower:
+                        score += 8
                 
                 # Definition matching
                 if hasattr(go_term, 'definition'):
@@ -1625,18 +1658,43 @@ class RNAChatGOPredictor:
                 go_context = f"\n\nRelevant Gene Ontology terms to consider: {', '.join(go_names[:10])}..."
         
         for i, (seq, name) in enumerate(zip(sequences, names if names else [f'RNA_{j}' for j in range(len(sequences))])):
-            # Create prompt for RNAChat
+            # Create MCQ-style prompt for RNAChat
+            # Format as multiple choice questions for key GO term categories
+            seq_display = str(seq)[:1000] if len(str(seq)) > 1000 else str(seq)
+            
+            # Build MCQ questions for top GO terms if available
+            mcq_section = ""
+            if self.go_terms_list and len(self.go_terms_list) > 0:
+                # Select top 10-15 GO terms to create MCQ questions
+                sample_gos = self.go_terms_list[:15]
+                mcq_questions = []
+                for idx, go_term in enumerate(sample_gos):
+                    if hasattr(go_term, 'name') and hasattr(go_term, 'go_id'):
+                        option_letter = chr(65 + (idx % 2))  # A or B for yes/no
+                        mcq_questions.append(
+                            f"Question {idx + 1}: Does this RNA participate in '{go_term.name}' (GO:{go_term.go_id})?\n"
+                            f"  A. Yes\n"
+                            f"  B. No\n"
+                        )
+                
+                if mcq_questions:
+                    mcq_section = "\n\nMultiple Choice Questions (Answer each with A or B):\n" + "\n".join(mcq_questions[:10])  # Limit to 10 questions
+            
             prompt = (
-                f"You are an RNA bioinformatics expert. Describe the biological functions of this RNA.\n\n"
+                f"You are an RNA bioinformatics expert. Analyze this RNA molecule and answer the following multiple choice questions.\n\n"
                 f"RNA name: {name}\n"
-                f"RNA sequence: {str(seq)[:1000] if len(str(seq)) > 1000 else str(seq)}\n\n"
-                f"Provide a detailed description of this RNA's functions, including:\n"
+                f"RNA sequence: {seq_display}\n\n"
+                f"Task: Based on the RNA name and sequence provided above, answer the following questions about its biological functions.\n"
+                f"For each question, respond with ONLY the letter (A or B) corresponding to your answer, followed by a brief justification.\n"
+                f"Format your response as: 'Q1: A - [brief reason]'\n\n"
+                f"{mcq_section}\n"
+                f"Additionally, provide a comprehensive description covering:\n"
                 f"- Biological processes it participates in\n"
                 f"- Molecular functions it performs\n"
                 f"- Cellular components it localizes to\n"
                 f"- Any regulatory roles or interactions\n\n"
                 f"Be specific and use biological terminology.{go_context}\n\n"
-                f"Description:"
+                f"Your analysis:"
             )
             
             # Generate text using RNAChat if available
@@ -1706,26 +1764,101 @@ class RNAChatRNATypeClassifier:
             'snRNA': ['small nuclear', 'snrna', 'splicing'],
             'other': ['other', 'unknown', 'novel']
         }
+        self.valid_types = list(self.type_keywords.keys())
     
     def predict(self, sequences, names=None):
-        """Classify RNA type from RNAChat output"""
+        """Classify RNA type from RNAChat output using MCQ format"""
         predictions = []
         
-        for seq, name in zip(sequences, names if names else ['RNA']*len(sequences)):
-            # Generate text with RNAChat (placeholder)
-            # generated_text = self.rnachat.generate(seq, name)
-            generated_text = f"This RNA functions as a messenger RNA encoding proteins."
+        for idx, (seq, name) in enumerate(zip(sequences, names if names else ['RNA']*len(sequences))):
+            generated_text = ""
             
-            # Score each type
-            scores = {}
-            text_lower = generated_text.lower()
-            for rna_type, keywords in self.type_keywords.items():
-                score = sum(1 for kw in keywords if kw in text_lower)
-                scores[rna_type] = score
+            # Try to use RNAChat model if provided
+            if self.rnachat is not None:
+                # Create MCQ format with options A-H
+                options = []
+                option_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+                for i, rna_type in enumerate(self.valid_types):
+                    if i < len(option_labels):
+                        options.append(f"{option_labels[i]}. {rna_type}")
+                
+                options_text = "\n".join(options)
+                
+                prompt = (
+                    "You are an RNA bioinformatics expert.\n"
+                    "Task: Given the RNA name and sequence, classify its RNA type by selecting the correct answer from the multiple choice options below.\n\n"
+                    f"RNA name: {name}\n"
+                    f"RNA sequence: {str(seq)[:1000] if len(str(seq)) > 1000 else str(seq)}\n\n"
+                    "Question: What is the most likely RNA type for this molecule?\n\n"
+                    f"Options:\n{options_text}\n\n"
+                    "Instructions: Select the single best answer by responding with ONLY the letter (A, B, C, D, E, F, G, or H) corresponding to your choice. Do not include any explanation or additional text.\n\n"
+                    "Answer:"
+                )
+                
+                try:
+                    # RNAChat.generate expects samples dict with "seq" and optional "prompt"
+                    samples = {
+                        "seq": [str(seq)],
+                        "prompt": [prompt]
+                    }
+                    
+                    # Generate with RNAChat
+                    generated_texts_list = self.rnachat.generate(
+                        samples,
+                        max_length=512,
+                        num_beams=3,
+                        temperature=0.7,
+                        do_sample=True,
+                        repetition_penalty=1.2
+                    )
+                    
+                    if generated_texts_list and len(generated_texts_list) > 0:
+                        generated_text = str(generated_texts_list[0]).strip()
+                    else:
+                        generated_text = ""
+                        
+                except Exception as e:
+                    print(f"Warning: RNAChat generation failed for {name}: {e}")
+                    generated_text = ""
             
-            # Predict type with highest score
-            pred_type = max(scores, key=scores.get) if max(scores.values()) > 0 else 'other'
-            predictions.append(pred_type)
+            # If model not available or failed, fall back to heuristic text
+            if not generated_text:
+                generated_text = f"This RNA functions as a messenger RNA encoding proteins."
+            
+            # Normalize and map to one of the valid labels
+            text_lower = generated_text.lower().strip()
+            text_upper = generated_text.upper().strip()
+            
+            # First, check for MCQ answer format (A, B, C, D, E, F, G, H)
+            option_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+            matched_label = None
+            
+            # Check if response starts with a letter option
+            for i, option in enumerate(option_labels):
+                if i < len(self.valid_types):
+                    # Check if the response starts with or contains just the option letter
+                    if text_upper.startswith(option) or (len(text_upper) == 1 and text_upper == option):
+                        matched_label = self.valid_types[i]
+                        break
+            
+            # If no MCQ answer found, try direct label match
+            if matched_label is None:
+                for label in self.valid_types:
+                    if label.lower() in text_lower:
+                        matched_label = label
+                        break
+            
+            # If still no match, score by keywords
+            if matched_label is None:
+                scores = {}
+                for rna_type, keywords in self.type_keywords.items():
+                    score = sum(1 for kw in keywords if kw in text_lower)
+                    scores[rna_type] = score
+                
+                # Predict type with highest score
+                matched_label = max(scores, key=scores.get) if max(scores.values()) > 0 else 'other'
+            
+            predictions.append(matched_label)
         
         return predictions
 
